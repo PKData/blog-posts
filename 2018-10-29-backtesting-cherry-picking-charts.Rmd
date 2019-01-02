@@ -1,0 +1,272 @@
+---
+title: Backtesting & Cherry-picking Charts
+author: Patrick Keller
+date: '2018-10-29'
+slug: backtesting-cherry-picking-charts
+categories: []
+tags:
+  - Technical Analysis
+  - R
+  - Stock
+showtoc: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+
+library(dplyr)
+library(tidyquant)
+```
+
+
+If you think you've got a winning trading strategy, or read somewhere about some technical trading signals, it's a good idea to test.  Backtesting is common behavior in the quantitative trading world, and I'm a fan of backtesting myself.
+
+So, backtesting is means of seeing how a given strategy performs over a window of time.  Great...  
+
+"But I just read an article on insert-stock-tip-page-here that said that the best way to trade my favorite symbol is insert-strategy-here.  They even had a chart to back it up!"
+
+I've had this thought process before, and after thinking about how bad of a thought process it is, I wanted to show how you can cherry-pick charts.  Down below the cherry-picking shenanigans, I show a graphical means of reviewing a strategy's past performance.
+
+First, we need some data for us to use.  The code below pulls STZ stock price data for the past 1500 calendar days.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz<-c("STZ") %>%
+  tq_get(get="stock.prices", from = Sys.Date()-1500, to = Sys.Date())
+```
+
+
+We're going to test a strategy revolving around the Aroon indicator, so we'll tack on the indicator columns using the **tidyquant** function **tq_mutate()**.  Running the code below gives us an **aroonUp** column, an **aroonDn** column, and an **oscillator** column.
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz2<- stz %>%
+  tq_mutate(select=close,mutate_fun=aroon)
+```
+
+If you read a little about the Aroon indicator elsewhere, you may read the idea that when the "up" value hits 100 and the "down" value is below a certain limit, the stock is likely to go up.  On the flip side, when the "down" value hits 100 and the "up" value is below a certain limit, the stock is predicted to go down.
+
+I won't say that this theory is good or bad, but it IS what we'll look at from here.
+
+Since our theory requires us checking for a change in value, we need to have the historical value ready for comparison. There are surely other ways to go about this, but I like the **lag()** function.  In the code below, we add a **yaup** column that houses the previous day's value for the **aroonUp** column, and a **yadown** column to house the previous day's value for **aroonDn**.
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz3 <- stz2 %>%
+  mutate(yaup=lag(aroonUp,1),yadown=lag(aroonDn,1))
+```
+
+So, now that we've got all the indicator information we need set up for our trade signals, it's time to add them to our data!  We're looking for the move TO 100 for the Aroon "up" value, so to find these instances we look for yesterday's Aroon "up" value to be lower than 100 in addition to looking for today's value being 100.  Add our threshold of a low (below 30) Aroon "down" value, and we've created a flag.  The **buy** flag variable is a **1** if all the buy conditions are met, and is **0** otherwise.  The **sell** flag follows the same logic, but looks for a low Aroon "up" and a 100 Aroon "down" value.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz4 <- stz3 %>%
+  mutate(buy=ifelse(yaup<100 &aroonUp==100 & aroonDn<30,1,0),
+         sell= ifelse(yadown<100 & aroonDn == 100 & aroonUp <30,1,0))
+```
+
+
+We've flagged our buy and sell dates, and we now want to record the purchase prices and sale prices based upon these trade dates.  Sure this could have been done with fancier **ifelse()** conditions, but for the sake of clarity this step happens in the code below.  
+
+Note that I simply use the closing price as a proxy for the price you'd pay/get on each date.  You have control of what you want to do here.  Sometimes, you might want to make this an average of the open, high, low, and close price to approximate the price you'd likely have paid a little better (think of a day when a stock you track has had a crazy run right before the bell).  In a more advanced version of what we're doing here, you can do some conditional limit-style buys with **ifelse()** in this step and the one above.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz5 <- stz4 %>%
+  mutate(purchaseprice=ifelse(buy==1,close,0),
+         sellprice= ifelse(sell==1,close,0))
+```
+
+
+So now we've got our buy and sell signals and prices calculated.  What we're really interested in is the **return** for each buy.  In other words, were my buys and sells profitable?
+
+To tackle this, I identify each window of time between sales with a unique number.  Since we've got a convenient 1/0 flag for our sell triggers, the **cumsum()** (cumulative sum) of the sell flag makes this super easy.
+
+The second bit of code below uses **lead()** for shifting the sale price up one.  This is all part of a trick to record the sell price for each buy, so stick with me.
+
+In the third bit of code below, we group by our **sellsession** that we created with **cumsum()**.  We then take the max of the **sellprice2** column to produce our sales price for each and every row.  There will only be one actual sell price per group, and it will be the price that ends the buy/sell window we have defined.
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+stz5<-na.omit(stz5)
+
+#identifying buy windows with transaction ids
+stz5$sellsession<-cumsum(stz5$sell)
+
+#shifting prices so that the next part works..
+stz6<-stz5 %>%
+  mutate(sellprice2=lead(sellprice,1))
+
+#putting the sell price from the next sell signal
+stz7 <- stz6 %>%
+  group_by(sellsession) %>%
+  mutate(futuresell=max(sellprice2))
+```
+
+calculating the gain/loss on each share within the trade window
+
+At the end of the day, I want to know what the return percentage is for each buy.  Below, we make this happen.  Where there is not a buy flag, we record a zero.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz8 <- stz7 %>%
+  mutate(return=ifelse(buy==1,(futuresell-purchaseprice)/purchaseprice,0))
+```
+
+Some of the time, more than one buy will trigger before the next sell date.  Within a trading range, it's interesting to see what the best and worst buy transactions yielded.  With some **min()** and **max()** functions looking at the buy transactions (with the **[buy==1]** bit specifying this), we now have columns that hold our minimum and maximum return for a given window of time.  This is going to come into play in the creation of all the visuals below. 
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz9 <- stz8 %>%
+    group_by(sellsession) %>%
+  mutate(meanreturn=mean(return[buy==1]),minreturn=min(return[buy==1]),maxreturn=max(return[buy==1]))
+```
+
+
+
+
+Before we actually make a plot, we need to select the data we're wanting to plot.  First, we select the rows wehre the mean return is the lowest.  Then, I like to add a few days worth of data on either side.  To do this, I take the minimum and maximum dates of the range we selected, and make our plotting range 7 days earlier and 7 days longer than our minimum meant return range.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+stz10<-stz9[stz9$meanreturn==min(stz9$meanreturn,na.rm=TRUE),]
+min<-min(stz10$date,na.rm=TRUE)-7
+max<-max(stz10$date,na.rm=TRUE)+7
+
+stz11<-stz9[stz9$date >= min & stz9$date <= max,]
+
+
+```
+
+## The Plots:  Aroon is Weak Version
+
+It's plot time!  I really like **dygraphs** for plotting time series, so that's what I'm using here.  We'll break our cherry-picked weak plots into two separate plots: one to display the behavior of the aroon indicator, and a second that illustrates the price movement along with each "buy" and "sell" trigger. 
+
+We select the columns we want to plot for the aroon indicator plot and define this data as **plotdata1**.  Then, since **dygraphs** takes **timeseries** data, we convert to a time series.
+
+The plot below shows the aroon action during the weak period of time.
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+plotdata1<-as.data.frame(stz11[,c(1,8,9,10)])
+plotdata1<-xts(plotdata1,order.by = plotdata1$date)
+
+#plotting
+library(dygraphs)
+dygraph(plotdata1,main = "Weak Performance Aroon", group="weak") %>%
+  dyRangeSelector() %>%
+  dyOptions(labelsUTC = TRUE,colors=RColorBrewer::brewer.pal(5,"Set2"))
+```
+
+This next plot displays the price movement of the stock over the weak time period, and flags the buy and sell signals with colored bars.  Looking at the chart below, the pink bars indicate sell signals and the purple indicates a buy signal.  This did not go well!
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+plotdata2<-as.data.frame(stz11[,c(1,5,13,14)])
+plotdata2<-xts(plotdata2,order.by = plotdata2$date)
+
+#plotting
+library(dygraphs)
+dygraph(plotdata2,main = "Weak Performance price", group="weak") %>%
+    dySeries("buy",axis='y2',label="Buy",stepPlot = TRUE,fillGraph = TRUE) %>%
+      dySeries("sell",axis='y2',label="Sell",stepPlot = TRUE,fillGraph = TRUE) %>%
+  dyRangeSelector() %>%
+  dyOptions(labelsUTC = TRUE,colors=RColorBrewer::brewer.pal(5,"Set2"))
+
+```
+
+
+## The Aroon Indicator: A Case for Strength!
+
+Cherry-picking a winning timeframe is much the same as finding a weak time frame.  Here, we look for a region where the mean return is highest.  For plotting purposes, we again (optionally) include a few days on either side of the strong trading window.
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+stz10alt<-stz9[stz9$meanreturn==max(stz9$meanreturn,na.rm=TRUE),]
+minalt<-min(stz10alt$date,na.rm=TRUE)-7
+maxalt<-max(stz10alt$date,na.rm=TRUE)+7
+
+stz11alt<-stz9[stz9$date >= minalt & stz9$date <= maxalt,]
+
+
+
+
+```
+
+
+The plot below displays the action of the aroon indicator over the strong window of time. 
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+plotdata3<-as.data.frame(stz11alt[,c(1,8,9,10)])
+plotdata3<-xts(plotdata3,order.by = plotdata3$date)
+
+#plotting
+library(dygraphs)
+dygraph(plotdata3,main = "Strong Performance Aroon", group="strong") %>%
+  dyRangeSelector() %>%
+  dyOptions(labelsUTC = TRUE,colors=RColorBrewer::brewer.pal(5,"Set2"))
+```
+
+
+The strong performance window, in this particular case, shows a long series of buying triggers as the price rises to a peak.  The first purchases in this window are made in the 140 - 160 region, while the first sell trigger to follow is near 200.  Given just this chart, one might be inclined to think this strategy is supreme!
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+plotdata4<-as.data.frame(stz11alt[,c(1,5,13,14)])
+plotdata4<-xts(plotdata4,order.by = plotdata4$date)
+
+#plotting
+library(dygraphs)
+dygraph(plotdata4,main = "Strong Performance price", group="strong") %>%
+    dySeries("buy",axis='y2',label="Buy",stepPlot = TRUE,fillGraph = TRUE) %>%
+      dySeries("sell",axis='y2',label="Sell",stepPlot = TRUE,fillGraph = TRUE) %>%
+  dyRangeSelector() %>%
+  dyOptions(labelsUTC = TRUE,colors=RColorBrewer::brewer.pal(5,"Set2"))
+```
+
+
+## The Diagnostic Plot
+
+
+Now, the chart below looks crazy, but I prefer "informative" when I look it over.  The idea here is to plot the strategy over as much time as we have the data for in order to minimize any cherry-picked chart shenanigans.
+
+We start with the unfiltered data, and plot a point for the returns earned based on each purchase the strategy produces.  These points are plotted as pink dots in the graphic below.
+
+To quickly visualize how well the best purchase did with regards to return for each window between buys and sells, we plot a line that highlights the maximum return level in orange.  With this line, and all of the return lines to follow, the higher the better, of course.  Looking for a pattern of consistent high values exceeding zero suggests that the best purchase flags are earning positive returns.  If windows of time where the max return line falls below zero exist, there might be cause for some caution in implementing the strategy.
+
+The minimum return line should ideally be above zero, but it is often the case that a buy signal won't always yield profitability.  The idea here is to get this line as high as possible, and to avoid any massive downward spikes in line positioning.
+
+With the mean line, the idea of higher being better remains the same.  A mean line below zero shows that the average purchase in a given time window yielded a negative return.  Batting lower than .500 in trading means losses, so this should be a sign that there might be issues with the strategy.
+
+## The Trend
+
+In looking at the longest time series of stock data you've got, finding a trend in the performance of the strategy you're testing can be extremely helpful in figuring out if it's worth pursuing.  If you see a downward trend, or even an upward trend, in the performance of your strategy, you may want to consider whether or not the strategy is bull/bear-proof.  In other words, does the strategy collapse when the market is doing well, or when the market is goind down?  My personal preference is for a strategy that doesn't care how the market is moving.
+
+As a crude measure of the trend, we can quickly make a regression line and fit it with prediction intervals.  To do this, we take the **lm()** function, and attempt to predict the return  using the date variable.  To get the actual predictions, we use **predict()** to apply the model to our data.  The **interval="predict"** portion produces the prediction in addition to the upper and lower prediction intervals for each point. I've plotted all three lines in the chart below.  I'd hope for regression line with a high intercept and flat line.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+stzforall<-stz9
+stzforall$minreturn[is.infinite(stzforall$minreturn)]<-0
+stzforall$maxreturn[is.na(stzforall$maxreturn)]<-0
+stzforall$meanreturn[is.na(stzforall$meanreturn)]<-0
+stzforall$return[stzforall$return==0]<-"NA"
+
+stzforlm<-na.omit(stzforall)
+quickregressionline<-lm(as.numeric(return)~date,data=stzforlm)
+
+stzforall[,c(24,25,26)]<-predict(quickregressionline,stzforall, interval="predict")
+
+
+stzforallp<-as.data.frame(stzforall[,c(1,5,20,21,22,23,24,25,26)])
+
+
+library(plotly)
+
+plot_ly(stzforallp, x=~date,y=~meanreturn,name="mean",type="scatter",mode="lines") %>%
+  add_trace(y=~maxreturn,name="max",mode="lines")%>%
+  add_trace(y=~minreturn,name="min",mode="lines")%>%
+  add_trace(y=~V24,name="fitted",mode="lines")%>%
+  add_trace(y=~V25,name="lowerbound",mode="lines")%>%
+  add_trace(y=~V26,name="upperbound",mode="lines")%>%
+  add_trace(y=~return,name="return",mode="markers")
+
+
+```
+
+Well, there you have it.  We can make bad strategies look good, and good strategies look bad.  More importantly and productively, though, we can determine how a strategy has held up against the test of time, and decide for ourselves how we feel about the method's true performance.
+

@@ -1,0 +1,161 @@
+---
+title: R for Excellers
+author: Patrick
+date: '2018-10-19'
+slug: r-for-excellers
+categories: []
+tags:
+  - R
+  - Excel
+showtoc: false
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+
+library(dplyr)
+data<-read.csv("E:/Blog/rforexcellers.csv")
+
+
+```
+
+
+I love Excel.  My first work with data manipulation was in Excel.  Over time, I learned a ton of Excel formulas and how to make things happen there.  Then, I started learning R.  Like with any first language, sometimes I find myself thinking in Excel before translating to R.
+
+This is my ever-changing page of Excel formulas (and combinations thereof) and how to do the same thing in R.
+
+
+## COUNTIF()
+
+COUNTIF() is great for counting given a condition.  Though I'll often go the **dplyr** route on things, I like the syntax of the **data.table** way of doing this.  People also argue that **data.table** is faster.  
+
+The code below is nice and short.  First, we turn our data into a datatable.  We name our new column **var1count**, specify that we want a count using**.N**, and list the variable(s) that we want to group by in the **by=** portion.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+library(data.table)
+data2<-data.table(data)
+data2[,var1count := .N, by= .(var1)]
+```
+
+Keeping with **data.table** for COUNTIF situations where the grouping is done based upon a continuous variable makes things a little complicated.  The code below generates a count of the values in **var2** that are five or more greater than the value in a given row.
+
+In essence, we are:
+
+1. Stating that we want the new column **biggerthanvar2plus** to house our calculated values.
+2. Defining our threshold value for comparison by making the **var2fiveormorehigher** temporary variable.
+3. Defining the relationship we're looking for (in this case, we want **var2** to be greater than or equal to the **var2fiveormorehigher** temporary value).
+4. Counting the number of records that meet this criteria for each row.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+data2<-data.table(data)
+data2[, biggerthanvar2plus := data2[.(var2fiveormorehigher = var2 + 5)
+                           , on = .(var2 >= var2fiveormorehigher)
+                           , .N
+                           , by = .EACHI][, N]]
+```
+
+This code is both functional AND expandable into situations with multiple conditions.  In Excel, this is...
+
+## COUNTIFS()
+
+Just a few adjustments to the COUNTIF() code, and you've got an R version of COUNTIFS().  If you're only using categorical conditions for your count, the code can stay nice and tidy-looking.  Simply adding a comma and whatever additional variable(s) you want to consider in your count to the COUNTIF() code and you're all set.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+library(data.table)
+data2<-data.table(data)
+data2[,var1count := .N, by= .(var1,var3)]
+```
+
+Adding additional conditions to code that includes relational numeric conditions requires adding the variable in reference to the "i" portion of the code (right after the **var2 + 5** in this case) as well as in the **on=** part.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+data2<-data.table(data)
+data2[, biggerthanvar2plus := data2[.(var2fiveormorehigher = var2 + 5,var1 = var1)
+                           , on = .(var2 >= var2fiveormorehigher, var1 = var1)
+                           , .N
+                           , by = .EACHI][, N]]
+```
+
+
+## IF()
+
+Ah, the classic IF().  In Excel, this let's you provide a logical statement, what you'd like returned if the logical statement is true, and what you'd like returned if it's false.  R makes things easy for the Excel-brain by keeping the arguments in that very same setup.
+
+The code below adds a column that is a check as to whether or not the **var1** value is "cat" and prints "yes" for "cat" values and "no" for anything else.
+
+```{r}
+data2<-data
+data2$isvar1acat<-ifelse(data2$var1=="cat","yes","no")
+```
+
+You can add multiple conditions to the first part of the IF() statement by using the **&** to represent AND() and the **|** symbol to represent OR().  Grouping with parentheses works, too.
+
+So, in the below example, we are checking to see if **var1** is "cat".  If it's not, we're checking if the row has a number value of 395 or higher for **var2** and if **var3** is "green".  If either of these checks is true, we're going to get the "yes" value returned.  If neither menas of yielding a "yes" is met, we get the "no" returned.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+data2<-data
+data2$isvar1acatorhighnumberandgreen<-ifelse(data2$var1 == "cat" | (data2$var2 >= 395 & data2$var3 == "green"),"yes","no")
+```
+
+As a potentially nitpicky side note, the "or" statement doesn't require that only one side of the "or"" is true.  In other words, a record that has "cat" for **var1**, a value of 468 for **var2**, and "green" for **var3** will yield a "yes" response even though all checks are true.
+
+
+## SUMIF()
+
+In Excel, the SUMIF function allows you to take the sum of a given column if values meet a specified criteria.  You specify a range, the criteria for that range, and the range that you want to sum.
+
+Approaching this in R, my preference is to use the **dplyr** package.
+
+Say, for instance, that we want to know the sum of **var2** for each level of **var1**.  We group_by() the variable that we want the sum to be respectful of. Then we use mutate() to add a new column for our sums, and define this column as the sum() of **var2**.
+
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+library(dplyr)
+data2 <- data %>%
+  group_by(var1) %>%
+  mutate(var2_total=sum(var2))
+```
+
+Alternatively, if you **don't** have a categorical variable you're trying to work with and simply want to sum a column given values in a particular range, you can skip the group_by() and define your filter using brackets, like this:
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+data2 <- data %>%
+  mutate(var2_total=sum(var2[var1>0]))
+```
+
+The **var2[var1>0]** allows us to take the sum of **var2** where **var1** is greater than zero.  
+
+You can add multiple criteria in the brackets if you need to, too.  This leads to.. 
+
+## SUMIFS()
+
+The R code here is very similar to SUMIF().  If you're grouping by more than one categorical variable, and want to maintain sums for each level, simply add those column names to the group_by(), like this:
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+data2 <- data %>%
+  group_by(var1,var3) %>%
+  mutate(var2_total=sum(var2))
+```
+
+For each combination of **var1** and **var3** are considered, and the sum of var2 is calculated.
+
+If we want to set criteria for particular values and/or continuous variables, we can instead adjust the [] code as follows:
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+data2 <- data %>%
+  mutate(var2_total=sum(var2[var1>0 & var1<10 | var3=="green"]))
+```
+
+We're calculated the sum of **var2** when **var1** is greater than 0 and less than 10, or **var3** reads "green" and nothing else.
+
+
+
+
+Excel is huge, and my fingers are weary.  To be continued.
+
+

@@ -1,0 +1,92 @@
+---
+title: Clustering Categorical and Numerical Data
+author: Patrick
+date: '2018-10-18'
+slug: clustering-categorical-and-numerical-data
+categories: []
+tags:
+  - R
+  - Clustering
+showtoc: false 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(knitr)
+library(cluster)
+library(klaR)
+library(kableExtra)
+```
+
+Alright, so we have some data, and we want to find clusters that might exist in our data.  Easy enough. We can choose a clustering method, measure the distances between points, and we'll have clusters in no time.
+
+But wait, there are categorical elements to our data?!  What do we do now?
+
+Sorry for the narrative, but that is precisely my thought process the first time someone talked to me about clustering data with this mixed bag of variables.  Luckily, after a little research, I found a reasonable method for making this happen.
+
+Take a look at the table below:
+
+```{r, echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+data<-read.csv("E:/catedemo.csv",header=TRUE)
+kable(data) %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+We've got five records with favorite color, favorite season, favorite pet, and height.
+
+
+## Measuring Distance
+
+Now, clustering is all about distance, so we need to calculate the distance between these records.  We can use a **dissimilarity matrix** to make this happen.  The daisy() function within the R package **cluster** does the trick here.
+
+```{r, echo=TRUE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+library(cluster)
+dist<-daisy(data, metric = "gower")
+
+```
+
+Check out the dissimilarity matrix we get:
+```{r, echo=FALSE, collapse=FALSE, warning=FALSE, message=FALSE}
+
+dist
+
+```
+
+Looking at our second record, we've got two categorical values in common with the record above and two categorical values in common with the record below.  The difference in height, however, is not equal.  Our second record has a height that's more similar to the height for record three than record one.  So, looking back at the dissimilarity matrix, we expect to see that the difference between record one and record two should be larger than the difference between two and three.  And it is!
+
+## On to Clustering!
+
+With our dissimilarity matrix in place, it's cluster time!  I use hclust() here for hierarchical clustering. Records two and three are closer relatives on the dendrogram than records one and two, just like we might expect from looking at the table.
+
+Record 4 splits off right away, and the high values in the dissimilarity matrix support this idea.
+
+```{r, echo=TRUE, collapse=FALSE, warning=FALSE, message=FALSE}
+model<-hclust(dist)
+plot(model)
+```
+
+## Adding Cluster Assignments to Our Data
+
+I won't go in to determining an appropriate number of clusters based on your data here, but here's a little bit of methodology for assigning cluster membership and adding a column to your data that reflects cluster assignment.
+
+First, we cut the dendrogram.  The cutree() function allows us to take our model and cut it at any point, as defined by the number of clusters.  I went with three.  This produces a list of cluster assignments.
+
+```{r, echo=TRUE, collapse=FALSE, warning=FALSE, message=FALSE}
+clustmember<-cutree(model,3)
+```
+
+To add the cluster assignment to our original data as a new column, I use data.frame() to read our original data and then define the new column named cluster.
+
+```{r, echo=TRUE, collapse=FALSE, warning=FALSE, message=FALSE}
+data2<-data.frame(data,cluster=clustmember)
+
+kable(data2) %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+Now, we've defined distance between our records, produced clusters, and recorded cluster assignment for future reference.
+
+
+Yesssss.

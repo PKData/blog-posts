@@ -1,0 +1,232 @@
+---
+title: 'Seeing Through Clouds: Alpha, Clustering, and Scatter Plots'
+author: Patrick
+date: '2018-10-16'
+slug: seeing-through-clouds-alpha-and-scatter-plots
+categories: []
+tags:
+  - R
+  - Scatter
+showtoc: false 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyquant)
+library(dplyr)
+library(plotly)
+
+```
+
+### Seeing Through Clouds
+
+Plotting tons of data points on a scatter plot can create giant blob of color.  Check out the plot below: 
+
+```{r , echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+#stocks<-tq_index("SP500", use_fallback =TRUE) %>%
+ # tq_get(get="stock.prices", from = Sys.Date()-180, to = Sys.Date())
+
+#stocks1<-stocks %>%
+#  mutate(percent_change=(close-open)/open)
+
+
+#stocks2<-stocks1 %>%
+#  group_by(symbol) %>%
+#  mutate(avg_move=mean(percent_change),avg_down=mean(percent_change[percent_change <0]),avg_up=mean(percent_change[percent_change >0]))
+         
+
+#stocks2<-na.omit(stocks2)
+
+#stocks3<-stocks2 %>%
+#  group_by(sector) %>%
+#  mutate(sector_avg_move=mean(percent_change))
+
+#stocks4<-stocks3 %>%
+#  group_by(symbol) %>%
+#  mutate(performance_vs_sector=avg_move-sector_avg_move)
+  
+
+
+#stocks4$good_day<-ifelse(stocks4$percent_change >0,1,0)
+
+#stocks5<-stocks4 %>%
+#  group_by(symbol) %>%
+#  mutate(win_rate=sum(good_day),move_z=(percent_change-mean(percent_change))/sd(percent_change))
+
+#stocks6<-stocks5 %>%
+#  group_by(symbol) %>%
+#  mutate(filtered_avg_move=mean(percent_change[-1 < move_z & move_z < 1]))
+
+###################NEW STUFFFFF
+
+#modstocks<- stocks6 %>%
+#  group_by(symbol)%>%
+  #tq_mutate(select=close,mutate_fun=BBands) %>%
+#  tq_mutate(select=close,mutate_fun=RSI) %>%
+  #tq_mutate_xy(x=close,y=volume,mutate_fun=OBV) %>%
+#  tq_mutate(select=c(high,low,close),mutate_fun=CLV) %>%
+#  tq_mutate(select=c(high,low,close),mutate_fun=ADX)%>% #%>%
+#  tq_mutate(select=c(high,low,close),mutate_fun=ultimateOscillator) %>%
+  #tq_mutate_xy(x=high:close,y=volume,mutate_fun=CMF) %>%
+  #tq_mutate(select=close,mutate_fun=WPR) #%>%
+  #tq_mutate(select=close,mutate_fun=TRIX)# %>%
+  #tq_mutate(select=close,mutate_fun=ROC) %>%
+#  tq_mutate(select=close,mutate_fun=aroon)%>%
+  #tq_mutate(select=close,mutate_fun=TDI)# %>%
+ # tq_mutate(select=c(high,low,close),mutate_fun=CCI) %>%
+#  tq_mutate(select=c(high,low),mutate_fun=chaikinVolatility)
+
+
+#added CMF WHICH APPEARS AS COLUMN "VALUE"
+#modstocks1<-modstocks %>%
+#  group_by(symbol) %>%
+#  nest() %>%
+#  mutate(CMF=map(data,~as.tibble(CMF(HLC = select(.x,high,low,close),
+ #                                    volume= .x$volume,
+  #                                   n=20)))) %>%
+  #unnest()
+
+
+#modstocks2<-modstocks1 %>%
+#  group_by(symbol) %>%
+#  mutate(fivedayprice=lead(open,5),fivedaychange=(fivedayprice-open)/open,onedayclose=lead(close,1),onedaychange=(onedayclose-open)/open)
+
+
+
+#modstocks3<-na.omit(modstocks2)
+
+
+
+#set.seed(123)
+#trainsize<-round(nrow(modstocks3)*.7,0)
+
+#train_ind<-sample(seq_len(nrow(modstocks3)),size=trainsize)
+#modstocks_train<-modstocks3[train_ind,]
+
+#modstocks_test<-modstocks3[-train_ind,]
+
+
+#library(rpart)
+
+
+
+
+
+#reg1<-glm(onedaychange~move_z+DIn +DIp + rsi +ADX+ DX+ clv +ultimateOscillator+cci+aroonUp+aroonDn+oscillator+EMA+value,data=modstocks_train)
+
+#perf1<-data.frame(actual=modstocks_test$onedaychange,reg1_pred=predict(reg1,modstocks_test))
+
+perf1<-read.csv("E:/Blog/stockpredictiondemo.csv",header=TRUE)
+
+
+plot_ly(perf1,x=~actual,y=~reg1_pred)
+```
+
+As you can see, there are tons of points in the middle of this plot that merge together to make a messy, massive blob.  With over 13,000 points plotted, it's seemingly impossible to tell much about the number of points within the cloud.
+
+Enter alpha.  By adjusting the aplha setting in your plot, you make each point semi-transparent.  This can give you an idea of just how much overlap may exist in your points.  Notice how points along the edges of the plot below allow you to see through them.  This gives us the idea that the points are a little more sparse out on the periphery.
+
+```{r , echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+plot_ly(perf1,x=~actual,y=~reg1_pred,alpha =0.15)
+```
+
+
+There's still a region in the middle of this plot that looks way too crowded for us to understand much about what's happening there.  
+One solution is to simply switch to a standard heatmap, but I don't like this solution.  Points plotted in the extreme regions of this plot effectively disappear out in the cold, lonely regions of the heatmap.  I like my visualization to let me know that these points exist, even if they are lone spots out in space. 
+
+So, how do we add the density information that a heatmap gives you, but preserve our individual points? Binning! In steps, we:
+
+1. Produce binned versions of our x and y variables.
+2. Group records by both their x and y bin.
+3. Tally the points within each group.
+4. Use this tally to color our plot.
+
+
+In the plot below, I've created a grid with 250 cuts on the x axis and 250 cuts on the y axis, counted the points that fall within each of the created squares, and applied a color scale based upon the number of points that share the same square. We've now got an idea of how "hot" the area that each point falls in is, and keep all of the plotted points!
+
+
+
+
+
+```{r,echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+
+
+
+
+
+
+kmeans<-kmeans(perf1,50)
+perf2<-cbind(perf1,cluster=fitted(kmeans,method="classes"))
+perf3<-perf2 %>%
+  group_by(cluster) %>%
+  add_tally()
+
+#perf3$xbin<-cut(perf3$actual,breaks=quantile(perf3$actual, probs = seq(0, 1, 0.025)), include.lowest=TRUE)
+
+perf3$xbin<-cut(perf3$actual,breaks=250, include.lowest=TRUE)
+
+#perf3$ybin<-cut(perf3$reg1_pred,breaks=quantile(perf3$reg1_pred, probs = seq(0, 1, 0.025)), include.lowest=TRUE)
+perf3$ybin<-cut(perf3$reg1_pred,breaks=250, include.lowest=TRUE)
+
+perf4<-perf3 %>%
+  group_by(xbin,ybin) %>%
+  add_tally()
+
+
+plot_ly(perf4,x=~actual,y=~reg1_pred,color=~nn, alpha=0.2)
+```
+
+Clearly there are a huge number of points falling in the middle of the plot.  A quick look at the distribution of "heat" shows that very few of the regions we prescribed using binning hold the higher point counts. 
+
+
+```{r,echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+hist(perf4$nn)
+```
+
+## Dodging the Grid
+
+We've got a much more informative scatter plot than the first plot in this post, but what about ditching the vertical/horizontal grid that we used to?
+
+Let's give clustering a try!
+
+In the plot below, I use the number of members within a given point's cluster to assign color. A clustering algorithm, like kmeans() used here, doesn't group points by grid position.  Instead, the clustering algortihm is looking for "sameness" between the points as judged by proximity to centroids.  I chose kmeans because there tends to be a rough similarity to the area taken up by the clusters, but the algorithm makes no attempts to distribute the points so that clusters hold the same raw number of points.  In other words, the algorithm could care less about cluster A having 100 points and cluster b having 9.
+
+The steps followed to add to this plot were:
+
+1. Run the kmeans algorithm on the data.
+2. Group by cluster assignment.
+3. Tally total members of of the cluster.
+4. Use this tally to apply a color scale to our plot points.
+
+Here, the cluster shapes are defined by our data, not some arbitrary form factor!
+
+```{r,echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+#kmeans<-kmeans(perf1,1325)
+#perf2<-cbind(perf1,cluster=fitted(kmeans,method="classes"))
+#perf3<-perf2 %>%
+ # group_by(cluster) %>%
+#  add_tally()
+
+plot_ly(perf3,x=~actual,y=~reg1_pred,color=~n, alpha=0.2)
+```
+
+If you need more reasons to love this plotting technique (ha, ha), try tweaking the number of clusters in your kmeans model.  In the plot above, I use 50 clusters.  In the plot below, I use 1000 clusters.  Check out the dispersion of color!  With these smaller cluster areas, you get an idea of the relative density in various spot as compared to the areas nearby.    
+
+```{r,echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+kmeans2<-kmeans(perf1,1000)
+perf22<-cbind(perf1,cluster=fitted(kmeans2,method="classes"))
+perf32<-perf22 %>%
+  group_by(cluster) %>%
+  add_tally()
+
+plot_ly(perf32,x=~actual,y=~reg1_pred,color=~n, alpha=0.2)
+```
+
+
+Regarding the number of points housed in each cluster (our metric for color scaling), we also see a nice normal distribution appearing in the histogram below.  This makes the color scale operate in such a way as to avoid the near-binary yellow or purple points with a less normally distributed color metric.
+```{r,echo=FALSE, collapse=TRUE, warning=FALSE, message=FALSE}
+hist(perf32$n)
+```
+
+Hopefully you found this interesting, if not helpful!  Until next time...
